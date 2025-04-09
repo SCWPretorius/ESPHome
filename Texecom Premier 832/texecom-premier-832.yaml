@@ -1,0 +1,540 @@
+esphome:
+  name: texecom-premier-832
+  friendly_name: Texecom Premier 832
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "1234567890"
+
+ota:
+  - platform: esphome
+    password: "1234567890" # Consider changing this default/example password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Texecom-Premier-832"
+    password: "1234567890" # Consider changing this default/example password
+
+captive_portal:
+
+# Enable Web Server for viewing status (optional)
+web_server:
+  port: 80
+
+# Define the UART connection to the alarm panel
+uart:
+  id: uart_bus
+  tx_pin: GPIO17 # Change to your ESP's TX pin connected to panel RX (via level shifter)
+  rx_pin: GPIO16 # Change to your ESP's RX pin connected to panel TX (via level shifter)
+  baud_rate: 19200
+  data_bits: 8
+  parity: NONE
+  stop_bits: 2
+  rx_buffer_size: 256 # Increase if needed for longer replies
+  # Optional: Enable UART debugging if needed (can be very verbose)
+  # debug:
+
+globals:
+  - id: g_authenticated
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: g_last_command_sent # Track what we are waiting for reply on
+    type: int # 0=None, 1=Auth, 2=Zones, 3=Partitions
+    restore_value: no
+    initial_value: '0'
+  - id: g_last_rx_time
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: g_rx_buffer
+    type: std::vector<uint8_t> # Buffer for incoming serial data
+  - id: g_udl_password
+    type: const char*
+    initial_value: '"1234"' # !!! SET YOUR PANEL'S UDL PASSWORD HERE !!!
+  - id: g_number_of_zones
+    type: int
+    initial_value: '24' # !!! SET THE NUMBER OF ZONES ON YOUR PANEL (e.g., 8, 16, 24, 32) !!!
+
+# Sensor to show connection/authentication status
+text_sensor:
+  - platform: template
+    id: panel_status
+    name: "Panel Status"
+    icon: "mdi:lan-connect"
+    update_interval: 15s
+    lambda: |-
+      if (id(g_authenticated)) {
+        if (millis() - id(g_last_rx_time) < 65000 && id(g_last_rx_time) != 0) {
+           return {"Authenticated"};
+        } else {
+           ESP_LOGW("panel_status", "Panel status timeout detected (last RX: %lu ms ago).", (unsigned long)(millis() - id(g_last_rx_time)));
+           return {"Timeout?"};
+        }
+      } else if (id(g_last_command_sent) == 1) {
+          return {"Authenticating..."};
+      } else {
+        return {"Disconnected"};
+      }
+
+# Binary Sensors for Zones Triggered
+# Create one for each zone you want to monitor (up to g_number_of_zones)
+binary_sensor:
+  - platform: template
+    id: zone_1_triggered
+    name: "Front Door"
+    device_class: door
+  - platform: template
+    id: zone_2_triggered
+    name: "Main Bedroom"
+    device_class: motion
+  - platform: template
+    id: zone_3_triggered
+    name: "Study"
+    device_class: motion
+  - platform: template
+    id: zone_4_triggered
+    name: "Passage"
+    device_class: motion
+  - platform: template
+    id: zone_5_triggered
+    name: "TV Room"
+    device_class: motion
+  - platform: template
+    id: zone_6_triggered
+    name: "Kitchen"
+    device_class: motion
+  - platform: template
+    id: zone_7_triggered
+    name: "Out Building"
+    device_class: motion
+  - platform: template
+    id: zone_8_triggered
+    name: "Flat"
+    device_class: motion
+  - platform: template
+    id: zone_9_triggered
+    name: "Lounge"
+    device_class: motion
+  - platform: template
+    id: zone_10_triggered
+    name: "Patio Beam"
+    device_class: motion
+  - platform: template
+    id: zone_11_triggered
+    name: "Lounge Beam"
+    device_class: motion
+  - platform: template
+    id: zone_12_triggered
+    name: "Main Bedroom Front Beam"
+    device_class: motion
+  - platform: template
+    id: zone_13_triggered
+    name: "Main Bedroom Back Beam"
+    device_class: motion
+  - platform: template
+    id: zone_14_triggered
+    name: "Flat Alley Beam"
+    device_class: motion
+  - platform: template
+    id: zone_15_triggered
+    name: "Kitchen Door"
+    device_class: door
+  - platform: template
+    id: zone_16_triggered
+    name: "Driveway Beam"
+    device_class: motion
+  - platform: template
+    id: zone_17_triggered
+    name: "Flat Front Beam"
+    device_class: motion
+  - platform: template
+    id: zone_18_triggered
+    name: "N/A"
+    device_class: problem
+  - platform: template
+    id: zone_19_triggered
+    name: "Remote Panic"
+    device_class: door # Not sure what to use yet
+  - platform: template
+    id: zone_20_triggered
+    name: "Remote Front Beam"
+    device_class: door # Not sure what to use yet
+  - platform: template
+    id: zone_21_triggered
+    name: "Remote House"
+    device_class: door # Not sure what to use yet
+  - platform: template
+    id: zone_22_triggered
+    name: "N/A"
+    device_class: problem
+  - platform: template
+    id: zone_23_triggered
+    name: "N/A"
+    device_class: problem
+  - platform: template
+    id: zone_24_triggered
+    name: "N/A"
+    device_class: problem
+
+  # Binary Sensors for Partition/System Armed State
+  - platform: template
+    id: system_armed_full # Represents "Armed" flag (16)
+    name: "System Armed Full"
+    device_class: lock
+  - platform: template
+    id: system_armed_stay # Represents "Stay Armed" flag (17)
+    name: "System Armed Stay"
+    device_class: lock
+
+# Interval to trigger polling (sending commands)
+interval:
+  - interval: 5s # How often to attempt to send the next command
+    id: trigger_poll_interval
+    then:
+      - script.execute: poll_panel
+
+  # Fast interval to read UART data and parse replies
+  - interval: 100ms # Check for and parse incoming data frequently
+    id: read_parse_interval
+    then:
+      - lambda: |-
+          // Log entry point for this interval
+          ESP_LOGV("parser_interval", "Running read_parse_interval lambda...");
+
+          bool data_read_this_cycle = false;
+          while (id(uart_bus).available()) {
+            uint8_t byte;
+            id(uart_bus).read_byte(&byte);
+            // Log each byte received immediately (DEBUG level)
+            ESP_LOGD("parser_raw_rx", "Byte RX: 0x%02X (%c)", byte, byte > 31 && byte < 127 ? byte : '.');
+            id(g_rx_buffer).push_back(byte);
+            data_read_this_cycle = true;
+          }
+
+          if (data_read_this_cycle) {
+            id(g_last_rx_time) = millis();
+            ESP_LOGV("parser", "Finished reading this cycle. Buffer size: %d", id(g_rx_buffer).size());
+          }
+
+          // --- PARSING LOGIC ---
+          if (id(g_rx_buffer).empty()) return; // Nothing to parse if buffer is empty
+
+          bool processed_message = false;
+          do {
+            processed_message = false;
+
+            // Log buffer state before attempting parse (Verbose level)
+            if (id(g_last_command_sent) != 0 && !id(g_rx_buffer).empty()) {
+              std::string buf_hex = "";
+              for(uint8_t b : id(g_rx_buffer)) { char hex[4]; sprintf(hex, "%02X ", b); buf_hex += hex; }
+              ESP_LOGV("parser", "Parsing buffer (Cmd %d): %s", id(g_last_command_sent), buf_hex.c_str());
+            }
+
+            // --- Check for OK reply ---
+            if (id(g_last_command_sent) == 1 && id(g_rx_buffer).size() >= 4) {
+              bool is_ok = (id(g_rx_buffer)[0] == 'O' && id(g_rx_buffer)[1] == 'K' && id(g_rx_buffer)[2] == 0x0D && id(g_rx_buffer)[3] == 0x0A);
+              ESP_LOGV("parser", "Checking for OK reply... Result: %s", is_ok ? "MATCH" : "NO MATCH");
+              if (is_ok) {
+                ESP_LOGI("parser", "Authentication successful (OK Received).");
+                id(g_authenticated) = true;
+                id(g_last_command_sent) = 0;
+                id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 4);
+                processed_message = true;
+              }
+            }
+
+            // --- Check for ERR0R reply ---
+            if (!processed_message && id(g_last_command_sent) != 0 && id(g_rx_buffer).size() >= 7) {
+              bool is_error = (id(g_rx_buffer)[0] == 'E' && id(g_rx_buffer)[1] == 'R' && id(g_rx_buffer)[2] == 'R' &&
+                              id(g_rx_buffer)[3] == '0' && id(g_rx_buffer)[4] == 'R' && id(g_rx_buffer)[5] == 0x0D &&
+                              id(g_rx_buffer)[6] == 0x0A);
+              ESP_LOGV("parser", "Checking for ERR0R reply... Result: %s", is_error ? "MATCH" : "NO MATCH");
+              if (is_error) {
+                ESP_LOGE("parser", "Panel returned ERR0R.");
+                id(g_authenticated) = false;
+                id(g_last_command_sent) = 0;
+                id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 7);
+                processed_message = true;
+              }
+            }
+
+            // --- Check for Zone Status reply ---
+            if (!processed_message && id(g_last_command_sent) == 2) {
+              int crlf_pos = -1;
+              for (size_t i = 0; (i + 1) < id(g_rx_buffer).size(); ++i) {
+                if (id(g_rx_buffer)[i] == 0x0D && id(g_rx_buffer)[i+1] == 0x0A) {
+                  crlf_pos = i;
+                  break;
+                }
+              }
+              ESP_LOGV("parser", "Checking for Zone reply (CRLF Pos: %d)", crlf_pos);
+              if (crlf_pos != -1 && crlf_pos > 0) {
+                 int num_zone_bytes = crlf_pos;
+                 int expected_zones = id(g_number_of_zones);
+                 if (expected_zones > 50) expected_zones = 50;
+
+                 if (num_zone_bytes <= expected_zones) {
+                    ESP_LOGD("parser", "Received %d zone status bytes.", num_zone_bytes);
+                    // --- Loop through received zone bytes ---
+                    for (int i = 0; i < num_zone_bytes; ++i) {
+                      uint8_t zone_byte = id(g_rx_buffer)[i];
+                      // Bit 0/1: 00=Healthy, 01=Alarm, 10=Tamper, 11=Shorted -> Triggered if not 00
+                      bool triggered = (zone_byte & 0b00000011) != 0;
+                      int zone_num = i + 1;
+                      esphome::binary_sensor::BinarySensor *zone_sensor = nullptr;
+                      // Get the sensor object based on zone number
+                      switch(zone_num) {
+                        case 1: zone_sensor = id(zone_1_triggered); break;
+                        case 2: zone_sensor = id(zone_2_triggered); break;
+                        case 3: zone_sensor = id(zone_3_triggered); break;
+                        case 4: zone_sensor = id(zone_4_triggered); break;
+                        case 5: zone_sensor = id(zone_5_triggered); break;
+                        case 6: zone_sensor = id(zone_6_triggered); break;
+                        case 7: zone_sensor = id(zone_7_triggered); break;
+                        case 8: zone_sensor = id(zone_8_triggered); break;
+                        case 9: zone_sensor = id(zone_9_triggered); break;
+                        case 10: zone_sensor = id(zone_10_triggered); break;
+                        case 11: zone_sensor = id(zone_11_triggered); break;
+                        case 12: zone_sensor = id(zone_12_triggered); break;
+                        case 13: zone_sensor = id(zone_13_triggered); break;
+                        case 14: zone_sensor = id(zone_14_triggered); break;
+                        case 15: zone_sensor = id(zone_15_triggered); break;
+                        case 16: zone_sensor = id(zone_16_triggered); break;
+                        case 17: zone_sensor = id(zone_17_triggered); break;
+                        case 18: zone_sensor = id(zone_18_triggered); break;
+                        case 19: zone_sensor = id(zone_19_triggered); break;
+                        case 20: zone_sensor = id(zone_20_triggered); break;
+                        case 21: zone_sensor = id(zone_21_triggered); break;
+                        case 22: zone_sensor = id(zone_22_triggered); break;
+                        case 23: zone_sensor = id(zone_23_triggered); break;
+                        case 24: zone_sensor = id(zone_24_triggered); break;
+                        // Add more cases here if g_number_of_zones > 24
+                        default: break; // Zone sensor not defined
+                      }
+                      // Update the sensor if found
+                      if (zone_sensor != nullptr) {
+                        // *** ADDED LOGGING FOR SENSOR UPDATE ***
+                        ESP_LOGD("zone_update", "Zone %d Raw: 0x%02X, Triggered: %s -> Publishing", zone_num, zone_byte, triggered ? "true" : "false");
+                        zone_sensor->publish_state(triggered);
+                      } else if (zone_num <= expected_zones) {
+                        // Only warn if we expected this zone based on g_number_of_zones
+                        ESP_LOGW("parser", "Zone sensor for zone %d not found in config!", zone_num);
+                      }
+                    } // End of for loop for received bytes
+
+                    // --- Loop through remaining expected zones (if any) and set to healthy ---
+                    for (int i = num_zone_bytes; i < expected_zones; ++i) {
+                       int zone_num = i + 1;
+                       esphome::binary_sensor::BinarySensor *zone_sensor = nullptr;
+                       // Get the sensor object based on zone number
+                       switch(zone_num) {
+                        case 1: zone_sensor = id(zone_1_triggered); break;
+                        case 2: zone_sensor = id(zone_2_triggered); break;
+                        case 3: zone_sensor = id(zone_3_triggered); break;
+                        case 4: zone_sensor = id(zone_4_triggered); break;
+                        case 5: zone_sensor = id(zone_5_triggered); break;
+                        case 6: zone_sensor = id(zone_6_triggered); break;
+                        case 7: zone_sensor = id(zone_7_triggered); break;
+                        case 8: zone_sensor = id(zone_8_triggered); break;
+                        case 9: zone_sensor = id(zone_9_triggered); break;
+                        case 10: zone_sensor = id(zone_10_triggered); break;
+                        case 11: zone_sensor = id(zone_11_triggered); break;
+                        case 12: zone_sensor = id(zone_12_triggered); break;
+                        case 13: zone_sensor = id(zone_13_triggered); break;
+                        case 14: zone_sensor = id(zone_14_triggered); break;
+                        case 15: zone_sensor = id(zone_15_triggered); break;
+                        case 16: zone_sensor = id(zone_16_triggered); break;
+                        case 17: zone_sensor = id(zone_17_triggered); break;
+                        case 18: zone_sensor = id(zone_18_triggered); break;
+                        case 19: zone_sensor = id(zone_19_triggered); break;
+                        case 20: zone_sensor = id(zone_20_triggered); break;
+                        case 21: zone_sensor = id(zone_21_triggered); break;
+                        case 22: zone_sensor = id(zone_22_triggered); break;
+                        case 23: zone_sensor = id(zone_23_triggered); break;
+                        case 24: zone_sensor = id(zone_24_triggered); break;
+                        // Add more cases here if g_number_of_zones > 24
+                        default: break;
+                       }
+                       // Update the sensor if found
+                       if (zone_sensor != nullptr) {
+                           // *** ADDED LOGGING FOR SENSOR UPDATE (HEALTHY) ***
+                           ESP_LOGD("zone_update", "Zone %d (Not Received): Assuming Healthy -> Publishing false", zone_num);
+                           zone_sensor->publish_state(false);
+                       }
+                    } // End of for loop for remaining zones
+
+                    // Mark command as processed and remove data from buffer
+                    id(g_last_command_sent) = 0;
+                    id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + crlf_pos + 2);
+                    processed_message = true;
+
+                 } else { // num_zone_bytes > expected_zones
+                    ESP_LOGW("parser", "Received unexpected number of zone bytes (%d, expected <= %d). Discarding.", num_zone_bytes, expected_zones);
+                    id(g_last_command_sent) = 0;
+                    id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + crlf_pos + 2);
+                    processed_message = true;
+                 }
+              } // End if CRLF found
+            } // End if g_last_command_sent == 2
+
+            // --- Check for Partition Status reply ---
+            if (!processed_message && id(g_last_command_sent) == 3 && id(g_rx_buffer).size() >= 3) {
+              bool is_part_reply = (id(g_rx_buffer)[1] == 0x0D && id(g_rx_buffer)[2] == 0x0A);
+              ESP_LOGV("parser", "Checking for Partition reply... Result: %s", is_part_reply ? "MATCH" : "NO MATCH");
+              if (is_part_reply) {
+                 uint8_t partition_byte = id(g_rx_buffer)[0];
+                 ESP_LOGD("parser", "Received partition status byte: 0x%02X", partition_byte);
+                 bool armed_full = (partition_byte & 0x01) != 0; // Bit 0 = Flag 16
+                 bool armed_stay = (partition_byte & 0x02) != 0; // Bit 1 = Flag 17
+                 // *** ADDED LOGGING FOR PARTITION UPDATE ***
+                 ESP_LOGD("partition_update", "Armed Full: %s, Armed Stay: %s -> Publishing", armed_full ? "true" : "false", armed_stay ? "true" : "false");
+                 id(system_armed_full).publish_state(armed_full);
+                 id(system_armed_stay).publish_state(armed_stay);
+                 // Mark command as processed and remove data from buffer
+                 id(g_last_command_sent) = 0;
+                 id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 3);
+                 processed_message = true;
+              }
+            } // End if g_last_command_sent == 3
+
+            // --- Cleanup buffer ---
+            if (!processed_message && !id(g_rx_buffer).empty() && id(g_rx_buffer).size() > 100) {
+                ESP_LOGW("parser", "RX buffer contains unparsed data or is too large, clearing %d bytes.", id(g_rx_buffer).size());
+                std::string buf_hex = "";
+                for(uint8_t b : id(g_rx_buffer)) { char hex[4]; sprintf(hex, "%02X ", b); buf_hex += hex; }
+                ESP_LOGW("parser", "Clearing buffer content: %s", buf_hex.c_str());
+                id(g_rx_buffer).clear();
+                if (id(g_last_command_sent) != 0) {
+                   ESP_LOGW("parser", "Resetting command state due to buffer clear.");
+                   id(g_last_command_sent) = 0;
+                }
+            }
+
+          } while (processed_message && !id(g_rx_buffer).empty()); // Loop if we processed a message and buffer still has data
+
+# Scripts to handle communication logic
+script:
+  - id: send_command
+    mode: single
+    parameters:
+      command_bytes: std::vector<uint8_t>
+    then:
+      - lambda: |-
+          if (!command_bytes.empty()) {
+            // Optional: Log the command being sent (DEBUG level)
+            std::string cmd_hex = "";
+            for(uint8_t b : command_bytes) { char hex[4]; sprintf(hex, "%02X ", b); cmd_hex += hex; }
+            ESP_LOGD("send_cmd", "Sending: %s", cmd_hex.c_str());
+            id(uart_bus).write_array(command_bytes.data(), command_bytes.size());
+          } else {
+             ESP_LOGW("send_cmd", "Attempted to send empty command buffer!");
+          }
+
+  - id: authenticate
+    mode: single
+    then:
+      - lambda: |-
+          // Log password being used (INFO Level - Be careful with sensitive data in logs)
+          // const char* pwd_to_send = id(g_udl_password);
+          // ESP_LOGI("auth_script", "Attempting authentication with UDL Password: '%s'", pwd_to_send);
+
+          id(g_authenticated) = false;
+          id(g_last_command_sent) = 1;
+          std::vector<uint8_t> cmd;
+          cmd.push_back('\\'); cmd.push_back('W');
+          const char* pwd = id(g_udl_password); // Get password from global
+          for(int i = 0; pwd[i] != '\0'; ++i) { cmd.push_back(pwd[i]); }
+          cmd.push_back('/');
+          // Log constructed command before sending (DEBUG Level)
+          // std::string cmd_hex = "";
+          // for(uint8_t b : cmd) { char hex[4]; sprintf(hex, "%02X ", b); cmd_hex += hex; }
+          // ESP_LOGD("auth_script", "Constructed auth command (Hex): %s", cmd_hex.c_str());
+          id(send_command).execute(cmd);
+
+  - id: read_zones
+    mode: single
+    then:
+      - lambda: |-
+          ESP_LOGD("zones_script", "Requesting zone status...");
+          id(g_last_command_sent) = 2;
+          int num_zones = id(g_number_of_zones);
+          if (num_zones <= 0) return;
+          if (num_zones > 50) num_zones = 50;
+          std::vector<uint8_t> cmd;
+          cmd.push_back('\\'); cmd.push_back('Z');
+          cmd.push_back(0x00); // Start Zone 1
+          cmd.push_back((uint8_t)num_zones);
+          cmd.push_back('/');
+          id(send_command).execute(cmd);
+
+  - id: read_partitions
+    mode: single
+    then:
+      - lambda: |-
+          ESP_LOGD("part_script", "Requesting partition status...");
+          id(g_last_command_sent) = 3;
+          std::vector<uint8_t> cmd;
+          cmd.push_back('\\'); cmd.push_back('P');
+          cmd.push_back(0x08); // Start output flag byte 8
+          cmd.push_back(0x01); // Read 1 byte
+          cmd.push_back('/');
+          id(send_command).execute(cmd);
+
+  - id: poll_panel
+    mode: queued
+    then:
+      # --- 1. Check Authentication & Timeout ---
+      - lambda: |-
+          unsigned long now = millis();
+          if (id(g_authenticated) && (now - id(g_last_rx_time) > 55000) && id(g_last_rx_time) != 0) {
+            ESP_LOGW("poll_panel", "Panel communication timeout (55s since last RX), forcing re-authentication.");
+            id(g_authenticated) = false;
+            id(g_last_command_sent) = 0;
+          }
+
+      # --- 2. Authenticate if needed ---
+      - if: # Check if NOT authenticated
+          condition:
+            lambda: 'return !id(g_authenticated);'
+          then:
+            - if: # Check if we are *NOT* already waiting for an auth reply
+                condition:
+                  lambda: 'return id(g_last_command_sent) != 1;'
+                then:
+                  - script.execute: authenticate
+                else:
+                  - lambda: ESP_LOGD("poll_panel", "Still waiting for authentication reply...");
+
+      # --- 3. Send Next Command if Authenticated and Idle ---
+      - if: # Check if authenticated AND idle
+          condition:
+            lambda: 'return id(g_authenticated) && id(g_last_command_sent) == 0;'
+          then:
+            - script.execute: read_zones
+            - delay: 200ms
+            - if: # Check again if still idle
+                condition:
+                    lambda: 'return id(g_authenticated) && id(g_last_command_sent) == 0;'
+                then:
+                    - script.execute: read_partitions
+
+      # --- 4. Log if Waiting (for replies other than Auth) ---
+      - if:
+          condition:
+            lambda: 'return id(g_last_command_sent) > 1;'
+          then:
+            - lambda: ESP_LOGD("poll_panel", "Waiting for reply (Cmd %d)...", id(g_last_command_sent));
