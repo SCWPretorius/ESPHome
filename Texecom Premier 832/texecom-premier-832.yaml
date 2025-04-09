@@ -9,10 +9,6 @@ esp32:
 
 # Enable logging
 logger:
-  # Set desired log level (DEBUG or VERBOSE recommended for testing)
-  level: DEBUG
-  # IMPORTANT: Disable hardware UART logging if using those pins for the panel
-  # baud_rate: 0
 
 # Enable Home Assistant API
 api:
@@ -74,7 +70,7 @@ globals:
   # Panel UDL (User Download Lead) Password - Must match panel config
   - id: g_udl_password
     type: const char*
-    initial_value: '"1234"' # !!! SET YOUR PANEL'S UDL PASSWORD HERE !!!
+    initial_value: !secret texecom_udl_password # !!! SET YOUR PANEL'S UDL PASSWORD HERE !!!
   # Total number of zones configured on the panel
   - id: g_number_of_zones
     type: int
