@@ -27,7 +27,7 @@ This ESPHome project allows you to monitor the status of Texecom Premier series 
 You **must** configure the Texecom Premier panel correctly using the Installer/Engineer menu:
 
 1.  **Enable COM Port:** Select a COM port on the panel to use for this connection and ensure it is **Enabled**.
-2.  **Set Protocol/Mode:** Configure the selected COM port's mode to **"Simple Protocol"**, **"ASCII Mode"**, **"Crestron Mode"** or the equivalent setting for your firmware version that matches the documented protocol. **It must NOT be "Modem", "UDL", "Printer", "Keypad Emulation", etc.**
+2.  **Set Protocol/Mode:** Configure the selected COM port's mode to **"PC Com"** or the equivalent setting for your firmware version that matches the documented protocol. **It must NOT be "Modem", "UDL", "Printer", "Keypad Emulation", etc.**
 3.  **Set Serial Parameters:** Configure the port settings to **exactly 19200 baud, 8 data bits, None parity, 2 stop bits (19200 8N2)**.
 4.  **UDL Password:** You need to know the panel's **UDL Password** (minimum 4, maximum 8 characters). This password will be stored in your `secrets.yaml` file.
 
