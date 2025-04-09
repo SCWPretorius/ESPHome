@@ -9,15 +9,21 @@ esp32:
 
 # Enable logging
 logger:
+  # Set desired log level (DEBUG or VERBOSE recommended for testing)
+  level: DEBUG
+  # IMPORTANT: Disable hardware UART logging if using those pins for the panel
+  # baud_rate: 0
 
 # Enable Home Assistant API
 api:
+  # Generate a strong key for encryption
   encryption:
     key: "1234567890"
 
 ota:
   - platform: esphome
-    password: "1234567890" # Consider changing this default/example password
+    # Recommend setting a strong OTA password
+    password: "1234567890"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -25,8 +31,8 @@ wifi:
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: "Texecom-Premier-832"
-    password: "1234567890" # Consider changing this default/example password
+    ssid: "Texecom-Premier-832-Fallback"
+    password: "1234567890" # Recommend setting a strong AP password
 
 captive_portal:
 
@@ -35,63 +41,109 @@ web_server:
   port: 80
 
 # Define the UART connection to the alarm panel
+# Requires a TTL <-> Panel Level Shifter (e.g., MAX3232)
 uart:
   id: uart_bus
-  tx_pin: GPIO17 # Change to your ESP's TX pin connected to panel RX (via level shifter)
-  rx_pin: GPIO16 # Change to your ESP's RX pin connected to panel TX (via level shifter)
+  tx_pin: GPIO17 # ESP TX -> Level Shifter -> Panel RX
+  rx_pin: GPIO16 # ESP RX <- Level Shifter <- Panel TX
   baud_rate: 19200
   data_bits: 8
   parity: NONE
   stop_bits: 2
-  rx_buffer_size: 256 # Increase if needed for longer replies
-  # Optional: Enable UART debugging if needed (can be very verbose)
-  # debug:
+  rx_buffer_size: 256 # Buffer for incoming serial data
 
 globals:
+  # Tracks if we have successfully authenticated with the panel
   - id: g_authenticated
     type: bool
     restore_value: no
     initial_value: 'false'
-  - id: g_last_command_sent # Track what we are waiting for reply on
+  # Tracks which command reply we are currently waiting for
+  - id: g_last_command_sent
     type: int # 0=None, 1=Auth, 2=Zones, 3=Partitions
     restore_value: no
     initial_value: '0'
+  # Timestamp of the last received byte from the panel (for timeout detection)
   - id: g_last_rx_time
     type: unsigned long
     restore_value: no
     initial_value: '0'
+  # Buffer to store incoming serial data bytes
   - id: g_rx_buffer
-    type: std::vector<uint8_t> # Buffer for incoming serial data
+    type: std::vector<uint8_t>
+  # Panel UDL (User Download Lead) Password - Must match panel config
   - id: g_udl_password
     type: const char*
     initial_value: '"1234"' # !!! SET YOUR PANEL'S UDL PASSWORD HERE !!!
+  # Total number of zones configured on the panel
   - id: g_number_of_zones
     type: int
-    initial_value: '24' # !!! SET THE NUMBER OF ZONES ON YOUR PANEL (e.g., 8, 16, 24, 32) !!!
+    initial_value: '24' # !!! SET THE NUMBER OF ZONES ON YOUR PANEL !!!
+  # State variable to alternate polling between zones and partitions
+  - id: g_poll_state
+    type: int # 0 = Poll Zones next, 1 = Poll Partitions next
+    restore_value: no
+    initial_value: '0' # Start by polling zones
 
-# Sensor to show connection/authentication status
+# Sensor to show high-level connection status
 text_sensor:
   - platform: template
     id: panel_status
     name: "Panel Status"
     icon: "mdi:lan-connect"
-    update_interval: 15s
+    update_interval: 15s # Primarily updated by logic, interval provides fallback view
     lambda: |-
       if (id(g_authenticated)) {
+        // Check if data received within timeout period (65s)
         if (millis() - id(g_last_rx_time) < 65000 && id(g_last_rx_time) != 0) {
            return {"Authenticated"};
         } else {
            ESP_LOGW("panel_status", "Panel status timeout detected (last RX: %lu ms ago).", (unsigned long)(millis() - id(g_last_rx_time)));
-           return {"Timeout?"};
+           return {"Timeout?"}; // Indicate potential loss of connection
         }
       } else if (id(g_last_command_sent) == 1) {
-          return {"Authenticating..."};
+          return {"Authenticating..."}; // In the process of logging in
       } else {
-        return {"Disconnected"};
+        return {"Disconnected"}; // Not authenticated, not trying to auth
       }
 
-# Binary Sensors for Zones Triggered
-# Create one for each zone you want to monitor (up to g_number_of_zones)
+  # Text sensors to display "Armed" / "Disarmed" for each partition
+  - platform: template
+    id: partition_1_status_text
+    name: "Partition 1 Status" # Customize partition name (e.g., House Status)
+    icon: "mdi:shield-home"
+    update_interval: never # Updated by the partition_1_armed binary sensor's on_state trigger
+    lambda: 'return {std::string(id(partition_1_armed).state ? "Armed" : "Disarmed")};'
+    # Optional: Change icon based on state
+    # icon_template: 'return id(partition_1_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
+
+  - platform: template
+    id: partition_2_status_text
+    name: "Partition 2 Status" # Customize partition name (e.g., Garage Status)
+    icon: "mdi:shield-home"
+    update_interval: never
+    lambda: 'return {std::string(id(partition_2_armed).state ? "Armed" : "Disarmed")};'
+    # icon_template: 'return id(partition_2_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
+
+  - platform: template
+    id: partition_3_status_text
+    name: "Partition 3 Status" # Customize partition name
+    icon: "mdi:shield-home"
+    update_interval: never
+    lambda: 'return {std::string(id(partition_3_armed).state ? "Armed" : "Disarmed")};'
+    # icon_template: 'return id(partition_3_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
+
+  - platform: template
+    id: partition_4_status_text
+    name: "Partition 4 Status" # Customize partition name
+    icon: "mdi:shield-home"
+    update_interval: never
+    lambda: 'return {std::string(id(partition_4_armed).state ? "Armed" : "Disarmed")};'
+    # icon_template: 'return id(partition_4_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
+
+
+# Binary Sensors for Zone status (Triggered / Healthy)
+# Customize 'name' and 'device_class' for each zone based on its function
 binary_sensor:
   - platform: template
     id: zone_1_triggered
@@ -163,118 +215,164 @@ binary_sensor:
     device_class: motion
   - platform: template
     id: zone_18_triggered
-    name: "N/A"
+    name: "N/A Zone 18" # Indicate unused zone
     device_class: problem
+    internal: true # Hide from Home Assistant by default
   - platform: template
     id: zone_19_triggered
-    name: "Remote Panic"
-    device_class: door # Not sure what to use yet
+    name: "Remote Panic" # Control or status?
+    device_class: problem
+    internal: true # Hide from Home Assistant by default
   - platform: template
     id: zone_20_triggered
-    name: "Remote Front Beam"
-    device_class: door # Not sure what to use yet
+    name: "Remote Front Beam" # Control or status?
+    device_class: problem
+    internal: true # Hide if this is just control feedback
   - platform: template
     id: zone_21_triggered
-    name: "Remote House"
-    device_class: door # Not sure what to use yet
+    name: "Remote House" # Control or status?
+    device_class: problem
+    internal: true # Hide if this is just control feedback
   - platform: template
     id: zone_22_triggered
-    name: "N/A"
+    name: "N/A Zone 22" # Indicate unused zone
     device_class: problem
+    internal: true # Hide from Home Assistant by default
   - platform: template
     id: zone_23_triggered
-    name: "N/A"
+    name: "N/A Zone 23" # Indicate unused zone
     device_class: problem
+    internal: true # Hide from Home Assistant by default
   - platform: template
     id: zone_24_triggered
-    name: "N/A"
+    name: "N/A Zone 24" # Indicate unused zone
     device_class: problem
+    internal: true # Hide from Home Assistant by default
 
-  # Binary Sensors for Partition/System Armed State
+  # Internal binary sensors holding the raw armed state (ON=Armed, OFF=Disarmed)
+  # Used to drive the text sensors above. Marked internal=true to hide Locked/Unlocked states.
   - platform: template
-    id: system_armed_full # Represents "Armed" flag (16)
-    name: "System Armed Full"
-    device_class: lock
+    id: partition_1_armed
+    name: "Partition 1 Armed State" # Internal name
+    device_class: lock # Helps with potential automations based on ON/OFF
+    internal: true # Hide this from HA UI by default
+    on_state:
+      then:
+        - text_sensor.template.publish:
+            id: partition_1_status_text
+            state: !lambda 'return std::string(id(partition_1_armed).state ? "Armed" : "Disarmed");'
+
   - platform: template
-    id: system_armed_stay # Represents "Stay Armed" flag (17)
-    name: "System Armed Stay"
+    id: partition_2_armed
+    name: "Partition 2 Armed State"
     device_class: lock
+    internal: true
+    on_state:
+      then:
+        - text_sensor.template.publish:
+            id: partition_2_status_text
+            state: !lambda 'return std::string(id(partition_2_armed).state ? "Armed" : "Disarmed");'
+
+  - platform: template
+    id: partition_3_armed
+    name: "Partition 3 Armed State"
+    device_class: lock
+    internal: true
+    on_state:
+      then:
+        - text_sensor.template.publish:
+            id: partition_3_status_text
+            state: !lambda 'return std::string(id(partition_3_armed).state ? "Armed" : "Disarmed");'
+
+  - platform: template
+    id: partition_4_armed
+    name: "Partition 4 Armed State"
+    device_class: lock
+    internal: true
+    on_state:
+      then:
+        - text_sensor.template.publish:
+            id: partition_4_status_text
+            state: !lambda 'return std::string(id(partition_4_armed).state ? "Armed" : "Disarmed");'
 
 # Interval to trigger polling (sending commands)
 interval:
-  - interval: 5s # How often to attempt to send the next command
+  # Determines when to initiate the next polling action (approx every 5s)
+  - interval: 5s
     id: trigger_poll_interval
     then:
       - script.execute: poll_panel
 
-  # Fast interval to read UART data and parse replies
-  - interval: 100ms # Check for and parse incoming data frequently
+  # Fast interval (every 100ms) to read available UART data and parse replies
+  - interval: 100ms
     id: read_parse_interval
     then:
       - lambda: |-
-          // Log entry point for this interval
-          ESP_LOGV("parser_interval", "Running read_parse_interval lambda...");
-
+          // Check if any data is available from the UART buffer
           bool data_read_this_cycle = false;
           while (id(uart_bus).available()) {
             uint8_t byte;
             id(uart_bus).read_byte(&byte);
-            // Log each byte received immediately (DEBUG level)
+            // Log raw byte at DEBUG level for troubleshooting
             ESP_LOGD("parser_raw_rx", "Byte RX: 0x%02X (%c)", byte, byte > 31 && byte < 127 ? byte : '.');
-            id(g_rx_buffer).push_back(byte);
+            id(g_rx_buffer).push_back(byte); // Add byte to our processing buffer
             data_read_this_cycle = true;
           }
 
+          // If we read any data, update the last received time (for timeout checks)
           if (data_read_this_cycle) {
             id(g_last_rx_time) = millis();
             ESP_LOGV("parser", "Finished reading this cycle. Buffer size: %d", id(g_rx_buffer).size());
           }
 
           // --- PARSING LOGIC ---
-          if (id(g_rx_buffer).empty()) return; // Nothing to parse if buffer is empty
+          // Only attempt to parse if the buffer actually contains data
+          if (id(g_rx_buffer).empty()) return;
 
           bool processed_message = false;
-          do {
+          do { // Loop in case multiple messages are in the buffer
             processed_message = false;
 
-            // Log buffer state before attempting parse (Verbose level)
+            // Log current buffer state if we are expecting a reply (Verbose level)
             if (id(g_last_command_sent) != 0 && !id(g_rx_buffer).empty()) {
               std::string buf_hex = "";
               for(uint8_t b : id(g_rx_buffer)) { char hex[4]; sprintf(hex, "%02X ", b); buf_hex += hex; }
-              ESP_LOGV("parser", "Parsing buffer (Cmd %d): %s", id(g_last_command_sent), buf_hex.c_str());
+              ESP_LOGV("parser", "Parsing buffer (Expecting Cmd %d): %s", id(g_last_command_sent), buf_hex.c_str());
             }
 
-            // --- Check for OK reply ---
+            // --- Check for Authentication OK reply (Command 1) ---
             if (id(g_last_command_sent) == 1 && id(g_rx_buffer).size() >= 4) {
               bool is_ok = (id(g_rx_buffer)[0] == 'O' && id(g_rx_buffer)[1] == 'K' && id(g_rx_buffer)[2] == 0x0D && id(g_rx_buffer)[3] == 0x0A);
               ESP_LOGV("parser", "Checking for OK reply... Result: %s", is_ok ? "MATCH" : "NO MATCH");
               if (is_ok) {
                 ESP_LOGI("parser", "Authentication successful (OK Received).");
-                id(g_authenticated) = true;
-                id(g_last_command_sent) = 0;
-                id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 4);
-                processed_message = true;
+                id(g_authenticated) = true;      // Set authenticated flag
+                id(g_last_command_sent) = 0;     // Reset waiting state
+                id(g_poll_state) = 0;            // Ensure we poll zones first after auth
+                id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 4); // Remove OK CR LF from buffer
+                processed_message = true;        // Mark that we processed a message
               }
             }
 
-            // --- Check for ERR0R reply ---
+            // --- Check for Panel ERR0R reply (any expected command) ---
             if (!processed_message && id(g_last_command_sent) != 0 && id(g_rx_buffer).size() >= 7) {
               bool is_error = (id(g_rx_buffer)[0] == 'E' && id(g_rx_buffer)[1] == 'R' && id(g_rx_buffer)[2] == 'R' &&
                               id(g_rx_buffer)[3] == '0' && id(g_rx_buffer)[4] == 'R' && id(g_rx_buffer)[5] == 0x0D &&
                               id(g_rx_buffer)[6] == 0x0A);
               ESP_LOGV("parser", "Checking for ERR0R reply... Result: %s", is_error ? "MATCH" : "NO MATCH");
               if (is_error) {
-                ESP_LOGE("parser", "Panel returned ERR0R.");
-                id(g_authenticated) = false;
-                id(g_last_command_sent) = 0;
-                id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 7);
+                ESP_LOGE("parser", "Panel returned ERR0R. Check password and panel config.");
+                id(g_authenticated) = false;     // Assume loss of authentication
+                id(g_last_command_sent) = 0;     // Reset waiting state
+                id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 7); // Remove ERR0R CR LF
                 processed_message = true;
               }
             }
 
-            // --- Check for Zone Status reply ---
+            // --- Check for Zone Status reply (Command 2) ---
+            // Format: RB1 RB2 ... RBx CR LF
             if (!processed_message && id(g_last_command_sent) == 2) {
-              int crlf_pos = -1;
+              int crlf_pos = -1; // Find the position of CR LF terminator
               for (size_t i = 0; (i + 1) < id(g_rx_buffer).size(); ++i) {
                 if (id(g_rx_buffer)[i] == 0x0D && id(g_rx_buffer)[i+1] == 0x0A) {
                   crlf_pos = i;
@@ -282,21 +380,26 @@ interval:
                 }
               }
               ESP_LOGV("parser", "Checking for Zone reply (CRLF Pos: %d)", crlf_pos);
-              if (crlf_pos != -1 && crlf_pos > 0) {
-                 int num_zone_bytes = crlf_pos;
-                 int expected_zones = id(g_number_of_zones);
-                 if (expected_zones > 50) expected_zones = 50;
 
+              // Check if CR LF was found and there's at least one data byte before it
+              if (crlf_pos != -1 && crlf_pos > 0) {
+                 int num_zone_bytes = crlf_pos; // Number of actual zone data bytes received
+                 int expected_zones = id(g_number_of_zones); // Max zones we care about
+                 if (expected_zones > 50) expected_zones = 50; // Protocol limit
+
+                 // Sanity check: Panel shouldn't send more bytes than configured/requested
                  if (num_zone_bytes <= expected_zones) {
                     ESP_LOGD("parser", "Received %d zone status bytes.", num_zone_bytes);
-                    // --- Loop through received zone bytes ---
+                    // Process each received zone byte
                     for (int i = 0; i < num_zone_bytes; ++i) {
                       uint8_t zone_byte = id(g_rx_buffer)[i];
-                      // Bit 0/1: 00=Healthy, 01=Alarm, 10=Tamper, 11=Shorted -> Triggered if not 00
+                      // Bits 0/1 determine status: 00=Healthy, 01=Alarm, 10=Tamper, 11=Shorted
+                      // We consider anything other than 00 as 'triggered'
                       bool triggered = (zone_byte & 0b00000011) != 0;
                       int zone_num = i + 1;
                       esphome::binary_sensor::BinarySensor *zone_sensor = nullptr;
-                      // Get the sensor object based on zone number
+
+                      // Map index 'i' to the correct zone sensor ID
                       switch(zone_num) {
                         case 1: zone_sensor = id(zone_1_triggered); break;
                         case 2: zone_sensor = id(zone_2_triggered); break;
@@ -322,25 +425,26 @@ interval:
                         case 22: zone_sensor = id(zone_22_triggered); break;
                         case 23: zone_sensor = id(zone_23_triggered); break;
                         case 24: zone_sensor = id(zone_24_triggered); break;
-                        // Add more cases here if g_number_of_zones > 24
-                        default: break; // Zone sensor not defined
+                        // Add cases for zones > 24 if needed
+                        default: break;
                       }
-                      // Update the sensor if found
+
+                      // Update the corresponding sensor if it's defined in the YAML
                       if (zone_sensor != nullptr) {
-                        // *** ADDED LOGGING FOR SENSOR UPDATE ***
                         ESP_LOGD("zone_update", "Zone %d Raw: 0x%02X, Triggered: %s -> Publishing", zone_num, zone_byte, triggered ? "true" : "false");
                         zone_sensor->publish_state(triggered);
                       } else if (zone_num <= expected_zones) {
-                        // Only warn if we expected this zone based on g_number_of_zones
+                        // Warn if a sensor is expected but not defined
                         ESP_LOGW("parser", "Zone sensor for zone %d not found in config!", zone_num);
                       }
-                    } // End of for loop for received bytes
+                    } // End loop through received zone bytes
 
-                    // --- Loop through remaining expected zones (if any) and set to healthy ---
+                    // If panel sent fewer bytes than expected (e.g. only 8 zones on 16 zone request)
+                    // set the remaining expected sensors to healthy (false)
                     for (int i = num_zone_bytes; i < expected_zones; ++i) {
                        int zone_num = i + 1;
                        esphome::binary_sensor::BinarySensor *zone_sensor = nullptr;
-                       // Get the sensor object based on zone number
+                       // Map index 'i' to the correct zone sensor ID (duplicated switch for clarity)
                        switch(zone_num) {
                         case 1: zone_sensor = id(zone_1_triggered); break;
                         case 2: zone_sensor = id(zone_2_triggered); break;
@@ -366,68 +470,102 @@ interval:
                         case 22: zone_sensor = id(zone_22_triggered); break;
                         case 23: zone_sensor = id(zone_23_triggered); break;
                         case 24: zone_sensor = id(zone_24_triggered); break;
-                        // Add more cases here if g_number_of_zones > 24
                         default: break;
                        }
-                       // Update the sensor if found
+                       // Update the sensor if it's defined
                        if (zone_sensor != nullptr) {
-                           // *** ADDED LOGGING FOR SENSOR UPDATE (HEALTHY) ***
                            ESP_LOGD("zone_update", "Zone %d (Not Received): Assuming Healthy -> Publishing false", zone_num);
                            zone_sensor->publish_state(false);
                        }
-                    } // End of for loop for remaining zones
+                    } // End loop through remaining expected zones
 
-                    // Mark command as processed and remove data from buffer
-                    id(g_last_command_sent) = 0;
-                    id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + crlf_pos + 2);
+                    // Successfully processed zone data
+                    id(g_last_command_sent) = 0; // Reset waiting state
+                    id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + crlf_pos + 2); // Remove processed data + CR LF
                     processed_message = true;
 
-                 } else { // num_zone_bytes > expected_zones
+                 } else { // Panel sent more bytes than expected (num_zone_bytes > expected_zones)
                     ESP_LOGW("parser", "Received unexpected number of zone bytes (%d, expected <= %d). Discarding.", num_zone_bytes, expected_zones);
-                    id(g_last_command_sent) = 0;
-                    id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + crlf_pos + 2);
+                    id(g_last_command_sent) = 0; // Reset waiting state (discard invalid message)
+                    id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + crlf_pos + 2); // Remove bad data + CR LF
                     processed_message = true;
                  }
               } // End if CRLF found
-            } // End if g_last_command_sent == 2
+            } // End processing for Zone reply (Cmd 2)
 
-            // --- Check for Partition Status reply ---
-            if (!processed_message && id(g_last_command_sent) == 3 && id(g_rx_buffer).size() >= 3) {
-              bool is_part_reply = (id(g_rx_buffer)[1] == 0x0D && id(g_rx_buffer)[2] == 0x0A);
-              ESP_LOGV("parser", "Checking for Partition reply... Result: %s", is_part_reply ? "MATCH" : "NO MATCH");
+            // --- Check for Partition Status reply (Command 3) ---
+            // Format: RB1 RB2 CR LF (RB1=Flag 16 byte, RB2=Flag 17 byte)
+            if (!processed_message && id(g_last_command_sent) == 3 && id(g_rx_buffer).size() >= 4) {
+              // Check for CR LF terminator after the 2 expected data bytes
+              bool is_part_reply = (id(g_rx_buffer)[2] == 0x0D && id(g_rx_buffer)[3] == 0x0A);
+              ESP_LOGV("parser", "Checking for Partition reply (2 bytes + CRLF)... Result: %s", is_part_reply ? "MATCH" : "NO MATCH");
+
               if (is_part_reply) {
-                 uint8_t partition_byte = id(g_rx_buffer)[0];
-                 ESP_LOGD("parser", "Received partition status byte: 0x%02X", partition_byte);
-                 bool armed_full = (partition_byte & 0x01) != 0; // Bit 0 = Flag 16
-                 bool armed_stay = (partition_byte & 0x02) != 0; // Bit 1 = Flag 17
-                 // *** ADDED LOGGING FOR PARTITION UPDATE ***
-                 ESP_LOGD("partition_update", "Armed Full: %s, Armed Stay: %s -> Publishing", armed_full ? "true" : "false", armed_stay ? "true" : "false");
-                 id(system_armed_full).publish_state(armed_full);
-                 id(system_armed_stay).publish_state(armed_stay);
-                 // Mark command as processed and remove data from buffer
+                 uint8_t flag16_byte = id(g_rx_buffer)[0]; // Byte representing Flag 16 (Armed) status for partitions 1-4+
+                 uint8_t flag17_byte = id(g_rx_buffer)[1]; // Byte representing Flag 17 (Stay Armed) status for partitions 1-4+
+                 ESP_LOGD("parser", "Received partition status bytes: Flag16=0x%02X, Flag17=0x%02X", flag16_byte, flag17_byte);
+
+                 // Extract individual partition armed states based on bits 0-3
+                 // Bit 0 = Partition 1, Bit 1 = Partition 2, Bit 2 = Partition 3, Bit 3 = Partition 4
+                 bool p1_full_armed = (flag16_byte & 0b00000001) != 0;
+                 bool p2_full_armed = (flag16_byte & 0b00000010) != 0;
+                 bool p3_full_armed = (flag16_byte & 0b00000100) != 0;
+                 bool p4_full_armed = (flag16_byte & 0b00001000) != 0;
+
+                 bool p1_stay_armed = (flag17_byte & 0b00000001) != 0;
+                 bool p2_stay_armed = (flag17_byte & 0b00000010) != 0;
+                 bool p3_stay_armed = (flag17_byte & 0b00000100) != 0;
+                 bool p4_stay_armed = (flag17_byte & 0b00001000) != 0;
+
+                 // Determine overall armed state (ON if either Full or Stay armed)
+                 bool p1_armed = p1_full_armed || p1_stay_armed;
+                 bool p2_armed = p2_full_armed || p2_stay_armed;
+                 bool p3_armed = p3_full_armed || p3_stay_armed;
+                 bool p4_armed = p4_full_armed || p4_stay_armed;
+
+                 // Log and publish state for each partition's binary sensor
+                 ESP_LOGD("partition_update", "P1 Armed: %s (Full:%s Stay:%s) -> Publishing", p1_armed ? "true" : "false", p1_full_armed ? "T" : "F", p1_stay_armed ? "T" : "F");
+                 id(partition_1_armed).publish_state(p1_armed); // This triggers the text sensor update via on_state
+
+                 ESP_LOGD("partition_update", "P2 Armed: %s (Full:%s Stay:%s) -> Publishing", p2_armed ? "true" : "false", p2_full_armed ? "T" : "F", p2_stay_armed ? "T" : "F");
+                 id(partition_2_armed).publish_state(p2_armed);
+
+                 ESP_LOGD("partition_update", "P3 Armed: %s (Full:%s Stay:%s) -> Publishing", p3_armed ? "true" : "false", p3_full_armed ? "T" : "F", p3_stay_armed ? "T" : "F");
+                 id(partition_3_armed).publish_state(p3_armed);
+
+                 ESP_LOGD("partition_update", "P4 Armed: %s (Full:%s Stay:%s) -> Publishing", p4_armed ? "true" : "false", p4_full_armed ? "T" : "F", p4_stay_armed ? "T" : "F");
+                 id(partition_4_armed).publish_state(p4_armed);
+
+                 // Mark command as processed and remove data from buffer (2 data + CR LF = 4 bytes)
                  id(g_last_command_sent) = 0;
-                 id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 3);
+                 id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 4);
                  processed_message = true;
               }
-            } // End if g_last_command_sent == 3
+            } // End processing for Partition reply (Cmd 3)
 
-            // --- Cleanup buffer ---
+            // --- Cleanup Buffer if data remains unparsed ---
+            // If no message was processed in this iteration and buffer is large, clear it to prevent overflow/stale data
             if (!processed_message && !id(g_rx_buffer).empty() && id(g_rx_buffer).size() > 100) {
                 ESP_LOGW("parser", "RX buffer contains unparsed data or is too large, clearing %d bytes.", id(g_rx_buffer).size());
+                // Log content before clearing for debugging
                 std::string buf_hex = "";
                 for(uint8_t b : id(g_rx_buffer)) { char hex[4]; sprintf(hex, "%02X ", b); buf_hex += hex; }
                 ESP_LOGW("parser", "Clearing buffer content: %s", buf_hex.c_str());
                 id(g_rx_buffer).clear();
+                // If we were waiting for a reply, reset the state as we missed it
                 if (id(g_last_command_sent) != 0) {
                    ESP_LOGW("parser", "Resetting command state due to buffer clear.");
                    id(g_last_command_sent) = 0;
+                   // Consider forcing re-authentication if buffer had to be cleared?
+                   // id(g_authenticated) = false;
                 }
             }
 
-          } while (processed_message && !id(g_rx_buffer).empty()); // Loop if we processed a message and buffer still has data
+          } while (processed_message && !id(g_rx_buffer).empty()); // Continue loop if a message was processed and buffer still has data
 
 # Scripts to handle communication logic
 script:
+  # Sends a byte vector command over UART
   - id: send_command
     mode: single
     parameters:
@@ -435,106 +573,119 @@ script:
     then:
       - lambda: |-
           if (!command_bytes.empty()) {
-            // Optional: Log the command being sent (DEBUG level)
+            // Log the hex representation of the command being sent (DEBUG level)
             std::string cmd_hex = "";
             for(uint8_t b : command_bytes) { char hex[4]; sprintf(hex, "%02X ", b); cmd_hex += hex; }
             ESP_LOGD("send_cmd", "Sending: %s", cmd_hex.c_str());
+            // Use write_array for sending byte vectors
             id(uart_bus).write_array(command_bytes.data(), command_bytes.size());
           } else {
              ESP_LOGW("send_cmd", "Attempted to send empty command buffer!");
           }
 
+  # Sends the authentication command (\W<password>/)
   - id: authenticate
     mode: single
     then:
       - lambda: |-
-          // Log password being used (INFO Level - Be careful with sensitive data in logs)
+          // Optional: Log clear-text password (INFO level - USE WITH CAUTION)
           // const char* pwd_to_send = id(g_udl_password);
           // ESP_LOGI("auth_script", "Attempting authentication with UDL Password: '%s'", pwd_to_send);
 
-          id(g_authenticated) = false;
-          id(g_last_command_sent) = 1;
-          std::vector<uint8_t> cmd;
-          cmd.push_back('\\'); cmd.push_back('W');
+          id(g_authenticated) = false;     // Reset authenticated status
+          id(g_last_command_sent) = 1;     // Set state to waiting for auth reply
+          std::vector<uint8_t> cmd;        // Build command vector
+          cmd.push_back('\\');             // Start char
+          cmd.push_back('W');              // Command 'W' (Request Access)
           const char* pwd = id(g_udl_password); // Get password from global
-          for(int i = 0; pwd[i] != '\0'; ++i) { cmd.push_back(pwd[i]); }
-          cmd.push_back('/');
-          // Log constructed command before sending (DEBUG Level)
-          // std::string cmd_hex = "";
-          // for(uint8_t b : cmd) { char hex[4]; sprintf(hex, "%02X ", b); cmd_hex += hex; }
-          // ESP_LOGD("auth_script", "Constructed auth command (Hex): %s", cmd_hex.c_str());
-          id(send_command).execute(cmd);
+          for(int i = 0; pwd[i] != '\0'; ++i) { // Append password characters
+             cmd.push_back(pwd[i]);
+          }
+          cmd.push_back('/');              // End char
+          id(send_command).execute(cmd);   // Execute the send script
 
+  # Sends the request for zone status (\Z<start_zone><count>/)
   - id: read_zones
     mode: single
     then:
       - lambda: |-
           ESP_LOGD("zones_script", "Requesting zone status...");
-          id(g_last_command_sent) = 2;
-          int num_zones = id(g_number_of_zones);
-          if (num_zones <= 0) return;
-          if (num_zones > 50) num_zones = 50;
-          std::vector<uint8_t> cmd;
-          cmd.push_back('\\'); cmd.push_back('Z');
-          cmd.push_back(0x00); // Start Zone 1
-          cmd.push_back((uint8_t)num_zones);
-          cmd.push_back('/');
-          id(send_command).execute(cmd);
+          id(g_last_command_sent) = 2;     // Set state to waiting for zone reply
+          int num_zones = id(g_number_of_zones); // Get configured number of zones
+          if (num_zones <= 0) return;      // Skip if no zones configured
+          if (num_zones > 50) num_zones = 50; // Limit request to protocol max
+          std::vector<uint8_t> cmd;        // Build command vector
+          cmd.push_back('\\');             // Start char
+          cmd.push_back('Z');              // Command 'Z' (Read Zones)
+          cmd.push_back(0x00);             // Start Zone index 0 (Zone 1)
+          cmd.push_back((uint8_t)num_zones); // Number of zones to read
+          cmd.push_back('/');              // End char
+          id(send_command).execute(cmd);   // Execute the send script
 
+  # Sends the request for partition status flags (\P<start_flag><count>/)
   - id: read_partitions
     mode: single
     then:
       - lambda: |-
-          ESP_LOGD("part_script", "Requesting partition status...");
-          id(g_last_command_sent) = 3;
-          std::vector<uint8_t> cmd;
-          cmd.push_back('\\'); cmd.push_back('P');
-          cmd.push_back(0x08); // Start output flag byte 8
-          cmd.push_back(0x01); // Read 1 byte
-          cmd.push_back('/');
-          id(send_command).execute(cmd);
+          ESP_LOGD("part_script", "Requesting partition status (Flags 16 & 17)...");
+          id(g_last_command_sent) = 3;     // Set state to waiting for partition reply
+          std::vector<uint8_t> cmd;        // Build command vector
+          cmd.push_back('\\');             // Start char
+          cmd.push_back('P');              // Command 'P' (Read Partition Flags)
+          cmd.push_back(0x10);             // Start Flag 16 (0x10 = Armed Status)
+          cmd.push_back(0x02);             // Read 2 flags (16 and 17)
+          cmd.push_back('/');              // End char
+          id(send_command).execute(cmd);   // Execute the send script
 
+  # Main polling logic controller, runs approx every 5 seconds
   - id: poll_panel
-    mode: queued
+    mode: queued # Ensure sequential execution, prevent overlap
     then:
-      # --- 1. Check Authentication & Timeout ---
+      # 1. Check if currently authenticated state timed out (no data received recently)
       - lambda: |-
           unsigned long now = millis();
+          // If authenticated but no data received for ~55 seconds, assume timeout
           if (id(g_authenticated) && (now - id(g_last_rx_time) > 55000) && id(g_last_rx_time) != 0) {
             ESP_LOGW("poll_panel", "Panel communication timeout (55s since last RX), forcing re-authentication.");
-            id(g_authenticated) = false;
-            id(g_last_command_sent) = 0;
+            id(g_authenticated) = false;     // Reset status
+            id(g_last_command_sent) = 0;     // Reset waiting state
+            id(g_poll_state) = 0;            // Reset poll sequence state
           }
 
-      # --- 2. Authenticate if needed ---
-      - if: # Check if NOT authenticated
+      # 2. If not authenticated, try to authenticate
+      - if:
           condition:
-            lambda: 'return !id(g_authenticated);'
+            lambda: 'return !id(g_authenticated);' # Check if NOT authenticated
           then:
-            - if: # Check if we are *NOT* already waiting for an auth reply
+            # Only send auth command if we are not *already* waiting for its reply
+            - if:
                 condition:
                   lambda: 'return id(g_last_command_sent) != 1;'
                 then:
                   - script.execute: authenticate
+                # If already waiting for auth reply, just log and do nothing else this cycle
                 else:
                   - lambda: ESP_LOGD("poll_panel", "Still waiting for authentication reply...");
 
-      # --- 3. Send Next Command if Authenticated and Idle ---
-      - if: # Check if authenticated AND idle
+      # 3. If authenticated AND idle (not waiting for any reply), send the next command in sequence
+      - if:
           condition:
             lambda: 'return id(g_authenticated) && id(g_last_command_sent) == 0;'
           then:
-            - script.execute: read_zones
-            - delay: 200ms
-            - if: # Check again if still idle
+            # Alternate between polling zones (state 0) and partitions (state 1)
+            - if:
                 condition:
-                    lambda: 'return id(g_authenticated) && id(g_last_command_sent) == 0;'
+                  lambda: 'return id(g_poll_state) == 0;' # Time to poll zones
                 then:
-                    - script.execute: read_partitions
+                  - script.execute: read_zones
+                  - lambda: id(g_poll_state) = 1;   # Next time, poll partitions
+                else: # Time to poll partitions (g_poll_state == 1)
+                  - script.execute: read_partitions
+                  - lambda: id(g_poll_state) = 0;   # Next time, poll zones
 
-      # --- 4. Log if Waiting (for replies other than Auth) ---
+      # 4. If waiting for a reply (other than authentication), log the waiting state
       - if:
           condition:
-            lambda: 'return id(g_last_command_sent) > 1;'
+            lambda: 'return id(g_last_command_sent) > 1;' # Waiting for Zone (2) or Partition (3) reply
           then:
             - lambda: ESP_LOGD("poll_panel", "Waiting for reply (Cmd %d)...", id(g_last_command_sent));
