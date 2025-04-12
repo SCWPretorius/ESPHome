@@ -18,7 +18,7 @@ This ESPHome project allows you to monitor the status of Texecom Premier series 
 ## Hardware Requirements
 
 1.  **ESP32 or ESP8266 Board:** An ESP32 is generally recommended for better performance.
-2.  **Level Shifter:** Texecom panels typically use serial levels different from the ESP's 3.3V TTL logic (often RS232-like levels on COM ports). A level shifter (e.g., a MAX3232 module) is **required** to safely connect the ESP's UART pins to the panel's COM port. **Do NOT connect ESP pins directly to the panel's COM port.**
+2.  **Level Shifter:** Texecom panels typically use serial levels different from the ESP's 3.3V TTL logic. A level shifter is **required** to safely connect the ESP's UART pins to the panel's COM port. **Do NOT connect ESP pins directly to the panel's COM port.**
 3.  **Wiring:** Jumper wires (Dupont cables) for connections.
 4.  **Power Supply:** A suitable power supply for your ESP board.
 
