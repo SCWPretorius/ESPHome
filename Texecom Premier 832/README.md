@@ -81,7 +81,7 @@ You can add these entities to your Lovelace dashboards and use them in automatio
 *   **Check ESPHome Logs:** Set the `logger:` level to `DEBUG` or `VERBOSE` for detailed information. Use the "Logs" option in the ESPHome dashboard.
 *   **"Disconnected" or "Timeout?" Status:**
     *   **Verify Wiring:** Check GND (ESP <-> Level Shifter <-> Panel), TX/RX connections (crossed correctly?), physical pin connections on ESP.
-    *   **Verify Level Shifter:** Check power and wiring according to its specific type (e.g., MAX3232).
+    *   **Verify Level Shifter:** Check power and wiring according to its specific type.
     *   **Verify Panel Configuration:** Is the COM port **Enabled**? Is the **Mode** set to Simple/ASCII/Crestron? Are the serial settings **19200 8N2**?
 *   **"Authenticating..." Status (Stuck):**
     *   If logs show **no `[parser_raw_rx]` bytes**, it's a hardware/panel config issue (see above).
@@ -100,7 +100,7 @@ You can add these entities to your Lovelace dashboards and use them in automatio
 
 ## License
 
-This project is typically licensed under the MIT License.
+This project is licensed under the MIT License.
 
 ## Acknowledgements
 
