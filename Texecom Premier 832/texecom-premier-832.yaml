@@ -5,14 +5,13 @@ esphome:
 esp32:
   board: esp32dev
   framework:
-    type: arduino
+    type: esp-idf
 
 # Enable logging
 logger:
 
 # Enable Home Assistant API
 api:
-  # Generate a strong key for encryption
   encryption:
     key: "1234567890"
 
@@ -102,41 +101,6 @@ text_sensor:
       } else {
         return {"Disconnected"}; // Not authenticated, not trying to auth
       }
-
-  # Text sensors to display "Armed" / "Disarmed" for each partition
-  - platform: template
-    id: partition_1_status_text
-    name: "Partition 1 Status" # Customize partition name (e.g., House Status)
-    icon: "mdi:shield-home"
-    update_interval: never # Updated by the partition_1_armed binary sensor's on_state trigger
-    lambda: 'return {std::string(id(partition_1_armed).state ? "Armed" : "Disarmed")};'
-    # Optional: Change icon based on state
-    # icon_template: 'return id(partition_1_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
-
-  - platform: template
-    id: partition_2_status_text
-    name: "Partition 2 Status" # Customize partition name (e.g., Garage Status)
-    icon: "mdi:shield-home"
-    update_interval: never
-    lambda: 'return {std::string(id(partition_2_armed).state ? "Armed" : "Disarmed")};'
-    # icon_template: 'return id(partition_2_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
-
-  - platform: template
-    id: partition_3_status_text
-    name: "Partition 3 Status" # Customize partition name
-    icon: "mdi:shield-home"
-    update_interval: never
-    lambda: 'return {std::string(id(partition_3_armed).state ? "Armed" : "Disarmed")};'
-    # icon_template: 'return id(partition_3_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
-
-  - platform: template
-    id: partition_4_status_text
-    name: "Partition 4 Status" # Customize partition name
-    icon: "mdi:shield-home"
-    update_interval: never
-    lambda: 'return {std::string(id(partition_4_armed).state ? "Armed" : "Disarmed")};'
-    # icon_template: 'return id(partition_4_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
-
 
 # Binary Sensors for Zone status (Triggered / Healthy)
 # Customize 'name' and 'device_class' for each zone based on its function
@@ -251,45 +215,21 @@ binary_sensor:
     id: partition_1_armed
     name: "Partition 1 Armed State" # Internal name
     device_class: lock # Helps with potential automations based on ON/OFF
-    internal: true # Hide this from HA UI by default
-    on_state:
-      then:
-        - text_sensor.template.publish:
-            id: partition_1_status_text
-            state: !lambda 'return std::string(id(partition_1_armed).state ? "Armed" : "Disarmed");'
 
   - platform: template
     id: partition_2_armed
     name: "Partition 2 Armed State"
     device_class: lock
-    internal: true
-    on_state:
-      then:
-        - text_sensor.template.publish:
-            id: partition_2_status_text
-            state: !lambda 'return std::string(id(partition_2_armed).state ? "Armed" : "Disarmed");'
 
   - platform: template
     id: partition_3_armed
     name: "Partition 3 Armed State"
     device_class: lock
-    internal: true
-    on_state:
-      then:
-        - text_sensor.template.publish:
-            id: partition_3_status_text
-            state: !lambda 'return std::string(id(partition_3_armed).state ? "Armed" : "Disarmed");'
 
   - platform: template
     id: partition_4_armed
     name: "Partition 4 Armed State"
     device_class: lock
-    internal: true
-    on_state:
-      then:
-        - text_sensor.template.publish:
-            id: partition_4_status_text
-            state: !lambda 'return std::string(id(partition_4_armed).state ? "Armed" : "Disarmed");'
 
 # Interval to trigger polling (sending commands)
 interval:
@@ -339,12 +279,24 @@ interval:
             // --- Check for Authentication OK reply (Command 1) ---
             if (id(g_last_command_sent) == 1 && id(g_rx_buffer).size() >= 4) {
               bool is_ok = (id(g_rx_buffer)[0] == 'O' && id(g_rx_buffer)[1] == 'K' && id(g_rx_buffer)[2] == 0x0D && id(g_rx_buffer)[3] == 0x0A);
-              ESP_LOGV("parser", "Checking for OK reply... Result: %s", is_ok ? "MATCH" : "NO MATCH");
+              ESP_LOGV("parser", "Checking for OK reply (Auth)... Result: %s", is_ok ? "MATCH" : "NO MATCH");
               if (is_ok) {
                 ESP_LOGI("parser", "Authentication successful (OK Received).");
                 id(g_authenticated) = true;      // Set authenticated flag
                 id(g_last_command_sent) = 0;     // Reset waiting state
                 id(g_poll_state) = 0;            // Ensure we poll zones first after auth
+                id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 4); // Remove OK CR LF from buffer
+                processed_message = true;        // Mark that we processed a message
+              }
+            }
+
+            // --- Check for Arm/Disarm OK reply (Command 4 or 5) ---
+            if (!processed_message && (id(g_last_command_sent) == 4 || id(g_last_command_sent) == 5) && id(g_rx_buffer).size() >= 4) {
+              bool is_ok = (id(g_rx_buffer)[0] == 'O' && id(g_rx_buffer)[1] == 'K' && id(g_rx_buffer)[2] == 0x0D && id(g_rx_buffer)[3] == 0x0A);
+              ESP_LOGV("parser", "Checking for OK reply (Arm/Disarm, Cmd %d)... Result: %s", id(g_last_command_sent), is_ok ? "MATCH" : "NO MATCH");
+              if (is_ok) {
+                ESP_LOGI("parser", "%s command successful (OK Received).", id(g_last_command_sent) == 4 ? "Arm" : "Disarm");
+                id(g_last_command_sent) = 0;     // Reset waiting state
                 id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 4); // Remove OK CR LF from buffer
                 processed_message = true;        // Mark that we processed a message
               }
@@ -357,7 +309,7 @@ interval:
                               id(g_rx_buffer)[6] == 0x0A);
               ESP_LOGV("parser", "Checking for ERR0R reply... Result: %s", is_error ? "MATCH" : "NO MATCH");
               if (is_error) {
-                ESP_LOGE("parser", "Panel returned ERR0R. Check password and panel config.");
+                ESP_LOGE("parser", "Panel returned ERR0R for command %d. Check panel config.", id(g_last_command_sent));
                 id(g_authenticated) = false;     // Assume loss of authentication
                 id(g_last_command_sent) = 0;     // Reset waiting state
                 id(g_rx_buffer).erase(id(g_rx_buffer).begin(), id(g_rx_buffer).begin() + 7); // Remove ERR0R CR LF
@@ -543,17 +495,13 @@ interval:
             // If no message was processed in this iteration and buffer is large, clear it to prevent overflow/stale data
             if (!processed_message && !id(g_rx_buffer).empty() && id(g_rx_buffer).size() > 100) {
                 ESP_LOGW("parser", "RX buffer contains unparsed data or is too large, clearing %d bytes.", id(g_rx_buffer).size());
-                // Log content before clearing for debugging
                 std::string buf_hex = "";
                 for(uint8_t b : id(g_rx_buffer)) { char hex[4]; sprintf(hex, "%02X ", b); buf_hex += hex; }
                 ESP_LOGW("parser", "Clearing buffer content: %s", buf_hex.c_str());
                 id(g_rx_buffer).clear();
-                // If we were waiting for a reply, reset the state as we missed it
                 if (id(g_last_command_sent) != 0) {
                    ESP_LOGW("parser", "Resetting command state due to buffer clear.");
                    id(g_last_command_sent) = 0;
-                   // Consider forcing re-authentication if buffer had to be cleared?
-                   // id(g_authenticated) = false;
                 }
             }
 
@@ -685,3 +633,82 @@ script:
             lambda: 'return id(g_last_command_sent) > 1;' # Waiting for Zone (2) or Partition (3) reply
           then:
             - lambda: ESP_LOGD("poll_panel", "Waiting for reply (Cmd %d)...", id(g_last_command_sent));
+  
+  # Arm partitions (send \A B1 /)
+  - id: arm_partitions
+    mode: single
+    parameters:
+      partitions: int
+    then:
+      - lambda: |-
+          ESP_LOGI("arm_cmd", "Arming partitions mask: 0x%02X", partitions);
+          id(g_last_command_sent) = 4;   // Expect OK or ERR0R
+          std::vector<uint8_t> cmd;
+          cmd.push_back('\\');
+          cmd.push_back('A');
+          cmd.push_back((uint8_t)partitions);
+          cmd.push_back('/');
+          id(send_command).execute(cmd);
+
+  # Disarm partitions (send \D B1 /)
+  - id: disarm_partitions
+    mode: single
+    parameters:
+      partitions: int
+    then:
+      - lambda: |-
+          ESP_LOGI("disarm_cmd", "Disarming partitions mask: 0x%02X", partitions);
+          id(g_last_command_sent) = 5;   // Expect OK or ERR0R
+          std::vector<uint8_t> cmd;
+          cmd.push_back('\\');
+          cmd.push_back('D');
+          cmd.push_back((uint8_t)partitions);
+          cmd.push_back('/');
+          id(send_command).execute(cmd);
+
+
+button:
+  # Partition 1
+  - platform: template
+    name: "Arm Partition 1"
+    on_press:
+      - script.execute:
+          id: arm_partitions
+          partitions: 0x01
+
+  - platform: template
+    name: "Disarm Partition 1"
+    on_press:
+      - script.execute:
+          id: disarm_partitions
+          partitions: 0x01
+
+  # Partition 2
+  - platform: template
+    name: "Arm Partition 2"
+    on_press:
+      - script.execute:
+          id: arm_partitions
+          partitions: 0x02
+
+  - platform: template
+    name: "Disarm Partition 2"
+    on_press:
+      - script.execute:
+          id: disarm_partitions
+          partitions: 0x02
+
+  # Partition 3
+  - platform: template
+    name: "Arm Partition 3"
+    on_press:
+      - script.execute:
+          id: arm_partitions
+          partitions: 0x04
+
+  - platform: template
+    name: "Disarm Partition 3"
+    on_press:
+      - script.execute:
+          id: disarm_partitions
+          partitions: 0x04
