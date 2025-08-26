@@ -15,6 +15,14 @@ api:
   encryption:
     key: "1234567890"
 
+# mqtt:
+#   broker: 192.168.1.1
+#   username: !secret mqtt_user
+#   password: !secret mqtt_password
+#   discovery: true
+#   topic_prefix: texecom_832
+#   discovery_retain: True
+
 ota:
   - platform: esphome
     # Recommend setting a strong OTA password
@@ -101,6 +109,56 @@ text_sensor:
       } else {
         return {"Disconnected"}; // Not authenticated, not trying to auth
       }
+
+    # Text sensors to display "Armed" / "Disarmed" for each partition
+  - platform: template
+    id: partition_1_status_text
+    name: "Partition 1 Status" # Customize partition name (e.g., House Status)
+    icon: "mdi:shield-home"
+    lambda: |-
+      if (id(partition_1_armed).has_state()) {
+        return {id(partition_1_armed).state ? "Armed" : "Disarmed"};
+      } else {
+        return {"Unknown"};
+      }
+    # Optional: Change icon based on state
+    # icon_template: 'return id(partition_1_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
+
+  - platform: template
+    id: partition_2_status_text
+    name: "Partition 2 Status" # Customize partition name (e.g., Garage Status)
+    icon: "mdi:shield-home"
+    lambda: |-
+      if (id(partition_2_armed).has_state()) {
+        return {id(partition_2_armed).state ? "Armed" : "Disarmed"};
+      } else {
+        return {"Unknown"};
+      }
+    # icon_template: 'return id(partition_2_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
+
+  - platform: template
+    id: partition_3_status_text
+    name: "Partition 3 Status" # Customize partition name
+    icon: "mdi:shield-home"
+    lambda: |-
+      if (id(partition_3_armed).has_state()) {
+        return {id(partition_3_armed).state ? "Armed" : "Disarmed"};
+      } else {
+        return {"Unknown"};
+      }
+    # icon_template: 'return id(partition_3_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
+
+  - platform: template
+    id: partition_4_status_text
+    name: "Partition 4 Status" # Customize partition name
+    icon: "mdi:shield-home"
+    lambda: |-
+      if (id(partition_4_armed).has_state()) {
+        return {id(partition_4_armed).state ? "Armed" : "Disarmed"};
+      } else {
+        return {"Unknown"};
+      }
+    # icon_template: 'return id(partition_4_armed).state ? "mdi:shield-lock" : "mdi:shield-off";'
 
 # Binary Sensors for Zone status (Triggered / Healthy)
 # Customize 'name' and 'device_class' for each zone based on its function
@@ -215,21 +273,46 @@ binary_sensor:
     id: partition_1_armed
     name: "Partition 1 Armed State" # Internal name
     device_class: lock # Helps with potential automations based on ON/OFF
+    internal: true # Hide this from HA UI by default
+    on_state:
+      then:
+        - text_sensor.template.publish:
+            id: partition_1_status_text
+            state: !lambda 'return std::string(id(partition_1_armed).state ? "Armed" : "Disarmed");'
 
   - platform: template
     id: partition_2_armed
     name: "Partition 2 Armed State"
     device_class: lock
+    internal: true
+    on_state:
+      then:
+        - text_sensor.template.publish:
+            id: partition_2_status_text
+            state: !lambda 'return std::string(id(partition_2_armed).state ? "Armed" : "Disarmed");'
 
   - platform: template
     id: partition_3_armed
     name: "Partition 3 Armed State"
     device_class: lock
+    internal: true
+    on_state:
+      then:
+        - text_sensor.template.publish:
+            id: partition_3_status_text
+            state: !lambda 'return std::string(id(partition_3_armed).state ? "Armed" : "Disarmed");'
 
   - platform: template
     id: partition_4_armed
     name: "Partition 4 Armed State"
     device_class: lock
+    internal: true
+    on_state:
+      then:
+        - text_sensor.template.publish:
+            id: partition_4_status_text
+            state: !lambda 'return std::string(id(partition_4_armed).state ? "Armed" : "Disarmed");'
+
 
 # Interval to trigger polling (sending commands)
 interval:
@@ -712,3 +795,6 @@ button:
       - script.execute:
           id: disarm_partitions
           partitions: 0x04
+
+  - platform: restart
+    name: "Texecom Alarm Restart"
